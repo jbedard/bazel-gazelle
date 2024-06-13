@@ -72,4 +72,4 @@ func parseDirectives(stmt []bzl.Expr) []Directive {
 	return directives
 }
 
-var directiveRe = regexp.MustCompile(`^#\s*gazelle:(\w+)\s*(.*?)\s*$`)
+var directiveRe = regexp.MustCompile(`^#\s*(?:gazelle|aspect):(\w+)\s*(.*?)\s*$`)
