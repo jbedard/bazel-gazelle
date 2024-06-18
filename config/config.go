@@ -120,6 +120,8 @@ type MappedKind struct {
 	FromKind, KindName, KindLoad string
 }
 
+const ASPECT_WALKSUBDIR = "__aspect:walksubdir"
+
 func New() *Config {
 	return &Config{
 		ValidBuildFileNames: DefaultValidBuildFileNames,

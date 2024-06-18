@@ -131,7 +131,7 @@ func Walk(c *config.Config, cexts []config.Configurer, dirs []string, mode Mode,
 	visit(c, cexts, knownDirectives, updateRels, trie, wf, "", false)
 }
 
-func visit(c *config.Config, cexts []config.Configurer, knownDirectives map[string]bool, updateRels *UpdateFilter, trie *pathTrie, wf WalkFunc, rel string, updateParent bool) {
+func visit(c *config.Config, cexts []config.Configurer, knownDirectives map[string]bool, updateRels *UpdateFilter, trie *pathTrie, wf WalkFunc, rel string, updateParent bool) ([]string, bool) {
 	haveError := false
 
 	// Absolute path to the directory being visited
@@ -152,7 +152,7 @@ func visit(c *config.Config, cexts []config.Configurer, knownDirectives map[stri
 	wc := getWalkConfig(c)
 
 	if wc.isExcluded(rel) {
-		return
+		return nil, false
 	}
 
 	// Filter and collect files
@@ -182,16 +182,34 @@ func visit(c *config.Config, cexts []config.Configurer, knownDirectives map[stri
 			subdirs = append(subdirs, base)
 
 			if updateRels.shouldVisit(entRel, shouldUpdate) {
-				visit(c, cexts, knownDirectives, updateRels, t, wf, entRel, shouldUpdate)
+				// PATCH ---
+				// Merge the returned 'subFiles' if 'mergeFiles' is true
+				subFiles, mergeFiles := visit(c, cexts, knownDirectives, updateRels, t, wf, entRel, shouldUpdate)
+				if mergeFiles {
+					for _, f := range subFiles {
+						regularFiles = append(regularFiles, path.Join(base, f))
+					}
+				} else {
+					subdirs = append(subdirs, base)
+				}
+				// END PATCH ---
 			}
 		}
 	}
+
+	// PATCH ---
+	// If not walking subdirectories simply return the files to the parent call
+	if f == nil && isWalkOnly(c) {
+		return regularFiles, true
+	}
+	// END PATCH ---
 
 	update := !haveError && !wc.ignore && shouldUpdate
 	if updateRels.shouldCall(rel, updateParent) {
 		genFiles := findGenFiles(wc, f)
 		wf(dir, rel, c, update, f, subdirs, regularFiles, genFiles)
 	}
+	return nil, false
 }
 
 // An UpdateFilter tracks which directories need to be updated
