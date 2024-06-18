@@ -125,9 +125,9 @@ func Walk(c *config.Config, cexts []config.Configurer, dirs []string, mode Mode,
 	visit(c, cexts, isBazelIgnored, knownDirectives, updateRels, wf, c.RepoRoot, "", false)
 }
 
-func visit(c *config.Config, cexts []config.Configurer, isBazelIgnored isIgnoredFunc, knownDirectives map[string]bool, updateRels *UpdateFilter, wf WalkFunc, dir, rel string, updateParent bool) {
+func visit(c *config.Config, cexts []config.Configurer, isBazelIgnored isIgnoredFunc, knownDirectives map[string]bool, updateRels *UpdateFilter, wf WalkFunc, dir, rel string, updateParent bool) ([]string, bool) {
 	if isBazelIgnored(rel) {
-		return
+		return nil, false
 	}
 
 	haveError := false
@@ -138,7 +138,7 @@ func visit(c *config.Config, cexts []config.Configurer, isBazelIgnored isIgnored
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		log.Print(err)
-		return
+		return nil, false
 	}
 
 	f, err := loadBuildFile(c, rel, dir, ents)
@@ -156,10 +156,10 @@ func visit(c *config.Config, cexts []config.Configurer, isBazelIgnored isIgnored
 	wc := getWalkConfig(c)
 
 	if wc.isExcluded(rel, ".") {
-		return
+		return nil, false
 	}
 
-	var subdirs, regularFiles []string
+	var dirs, subdirs, regularFiles []string
 	for _, ent := range ents {
 		base := ent.Name()
 		if isBazelIgnored(path.Join(rel, base)) || wc.isExcluded(rel, base) {
@@ -170,24 +170,42 @@ func visit(c *config.Config, cexts []config.Configurer, isBazelIgnored isIgnored
 		case ent == nil:
 			continue
 		case ent.IsDir():
-			subdirs = append(subdirs, base)
+			dirs = append(dirs, base)
 		default:
 			regularFiles = append(regularFiles, base)
 		}
 	}
 
 	shouldUpdate := updateRels.shouldUpdate(rel, updateParent)
-	for _, sub := range subdirs {
+	for _, sub := range dirs {
 		if subRel := path.Join(rel, sub); updateRels.shouldVisit(subRel, shouldUpdate) {
-			visit(c, cexts, isBazelIgnored, knownDirectives, updateRels, wf, filepath.Join(dir, sub), subRel, shouldUpdate)
+			// PATCH ---
+			// Merge the returned 'subFiles' if 'mergeFiles' is true
+			subFiles, mergeFiles := visit(c, cexts, isBazelIgnored, knownDirectives, updateRels, wf, filepath.Join(dir, sub), subRel, shouldUpdate)
+			if mergeFiles {
+				for _, f := range subFiles {
+					regularFiles = append(regularFiles, path.Join(sub, f))
+				}
+			} else {
+				subdirs = append(subdirs, sub)
+			}
+			// END PATCH ---
 		}
 	}
+
+	// PATCH ---
+	// If not walking subdirectories simply return the files to the parent call
+	if f == nil && isWalkOnly(c) {
+		return regularFiles, true
+	}
+	// END PATCH ---
 
 	update := !haveError && !wc.ignore && shouldUpdate
 	if updateRels.shouldCall(rel, updateParent) {
 		genFiles := findGenFiles(wc, f)
 		wf(dir, rel, c, update, f, subdirs, regularFiles, genFiles)
 	}
+	return nil, false
 }
 
 // An UpdateFilter tracks which directories need to be updated
