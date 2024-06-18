@@ -49,6 +49,11 @@ func getWalkConfig(c *config.Config) *walkConfig {
 	return c.Exts[walkName].(*walkConfig)
 }
 
+func isWalkOnly(c *config.Config) bool {
+	walkSubdirsExt, walkSubdirsExtExists := c.Exts[config.ASPECT_WALKSUBDIR]
+	return walkSubdirsExtExists && walkSubdirsExt.(bool)
+}
+
 func (wc *walkConfig) isExcluded(p string) bool {
 	return matchAnyGlob(wc.excludes, p)
 }

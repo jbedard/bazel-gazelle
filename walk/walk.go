@@ -132,7 +132,7 @@ func Walk(c *config.Config, cexts []config.Configurer, dirs []string, mode Mode,
 	visit(c, cexts, knownDirectives, updateRels, trie, wf, "", false)
 }
 
-func visit(c *config.Config, cexts []config.Configurer, knownDirectives map[string]bool, updateRels *UpdateFilter, trie *pathTrie, wf WalkFunc, rel string, updateParent bool) {
+func visit(c *config.Config, cexts []config.Configurer, knownDirectives map[string]bool, updateRels *UpdateFilter, trie *pathTrie, wf WalkFunc, rel string, updateParent bool) ([]string, bool) {
 	haveError := false
 
 	ents := make([]fs.DirEntry, 0, len(trie.children))
@@ -162,10 +162,10 @@ func visit(c *config.Config, cexts []config.Configurer, knownDirectives map[stri
 	wc := getWalkConfig(c)
 
 	if wc.isExcluded(rel) {
-		return
+		return nil, false
 	}
 
-	var subdirs, regularFiles []string
+	var dirs, subdirs, regularFiles []string
 	for _, ent := range ents {
 		base := ent.Name()
 		entRel := path.Join(rel, base)
@@ -177,24 +177,42 @@ func visit(c *config.Config, cexts []config.Configurer, knownDirectives map[stri
 		case ent == nil:
 			continue
 		case ent.IsDir():
-			subdirs = append(subdirs, base)
+			dirs = append(dirs, base)
 		default:
 			regularFiles = append(regularFiles, base)
 		}
 	}
 
 	shouldUpdate := updateRels.shouldUpdate(rel, updateParent)
-	for _, sub := range subdirs {
+	for _, sub := range dirs {
 		if subRel := path.Join(rel, sub); updateRels.shouldVisit(subRel, shouldUpdate) {
-			visit(c, cexts, knownDirectives, updateRels, trie.children[sub], wf, subRel, shouldUpdate)
+			// PATCH ---
+			// Merge the returned 'subFiles' if 'mergeFiles' is true
+			subFiles, mergeFiles := visit(c, cexts, knownDirectives, updateRels, trie.children[sub], wf, subRel, shouldUpdate)
+			if mergeFiles {
+				for _, f := range subFiles {
+					regularFiles = append(regularFiles, path.Join(sub, f))
+				}
+			} else {
+				subdirs = append(subdirs, sub)
+			}
+			// END PATCH ---
 		}
 	}
+
+	// PATCH ---
+	// If not walking subdirectories simply return the files to the parent call
+	if f == nil && isWalkOnly(c) {
+		return regularFiles, true
+	}
+	// END PATCH ---
 
 	update := !haveError && !wc.ignore && shouldUpdate
 	if updateRels.shouldCall(rel, updateParent) {
 		genFiles := findGenFiles(wc, f)
 		wf(dir, rel, c, update, f, subdirs, regularFiles, genFiles)
 	}
+	return nil, false
 }
 
 // An UpdateFilter tracks which directories need to be updated
