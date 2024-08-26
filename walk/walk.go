@@ -23,10 +23,13 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 
 	"github.com/bazelbuild/bazel-gazelle/config"
 	"github.com/bazelbuild/bazel-gazelle/rule"
+	"golang.org/x/sync/errgroup"
 )
 
 // Mode determines which directories Walk visits and which directories
@@ -122,24 +125,30 @@ func Walk(c *config.Config, cexts []config.Configurer, dirs []string, mode Mode,
 		log.Printf("error loading .bazelignore: %v", err)
 	}
 
-	visit(c, cexts, isBazelIgnored, knownDirectives, updateRels, wf, c.RepoRoot, "", false)
+	trie, err := buildTrie(c, isBazelIgnored)
+	if err != nil {
+		log.Fatalf("error walking the file system: %v\n", err)
+	}
+
+	visit(c, cexts, knownDirectives, updateRels, trie, wf, c.RepoRoot, "", false)
 }
 
-func visit(c *config.Config, cexts []config.Configurer, isBazelIgnored isIgnoredFunc, knownDirectives map[string]bool, updateRels *UpdateFilter, wf WalkFunc, dir, rel string, updateParent bool) ([]string, bool) {
-	if isBazelIgnored(rel) {
-		return nil, false
-	}
-
+func visit(c *config.Config, cexts []config.Configurer, knownDirectives map[string]bool, updateRels *UpdateFilter, trie *pathTrie, wf WalkFunc, dir, rel string, updateParent bool) ([]string, bool) {
 	haveError := false
 
-	// TODO: OPT: ReadDir stats all the files, which is slow. We just care about
-	// names and modes, so we should use something like
-	// golang.org/x/tools/internal/fastwalk to speed this up.
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		log.Print(err)
+	node := trie.Get(rel)
+	if node == nil {
 		return nil, false
 	}
+
+	ents := make([]fs.DirEntry, 0, len(node.children))
+	for _, node := range node.children {
+		ents = append(ents, *node.entry)
+	}
+
+	sort.SliceStable(ents, func(i, j int) bool {
+		return ents[i].Name() < ents[j].Name()
+	})
 
 	f, err := loadBuildFile(c, rel, dir, ents)
 	if err != nil {
@@ -162,7 +171,7 @@ func visit(c *config.Config, cexts []config.Configurer, isBazelIgnored isIgnored
 	var dirs, subdirs, regularFiles []string
 	for _, ent := range ents {
 		base := ent.Name()
-		if isBazelIgnored(path.Join(rel, base)) || wc.isExcluded(rel, base) {
+		if wc.isExcluded(rel, base) {
 			continue
 		}
 		ent := resolveFileInfo(wc, dir, rel, ent)
@@ -181,7 +190,7 @@ func visit(c *config.Config, cexts []config.Configurer, isBazelIgnored isIgnored
 		if subRel := path.Join(rel, sub); updateRels.shouldVisit(subRel, shouldUpdate) {
 			// PATCH ---
 			// Merge the returned 'subFiles' if 'mergeFiles' is true
-			subFiles, mergeFiles := visit(c, cexts, isBazelIgnored, knownDirectives, updateRels, wf, filepath.Join(dir, sub), subRel, shouldUpdate)
+			subFiles, mergeFiles := visit(c, cexts, knownDirectives, updateRels, trie, wf, filepath.Join(dir, sub), subRel, shouldUpdate)
 			if mergeFiles {
 				for _, f := range subFiles {
 					regularFiles = append(regularFiles, path.Join(sub, f))
@@ -373,4 +382,63 @@ func resolveFileInfo(wc *walkConfig, dir, rel string, ent fs.DirEntry) fs.DirEnt
 		return nil
 	}
 	return fs.FileInfoToDirEntry(fi)
+}
+
+func buildTrie(c *config.Config, isBazelIgnored isIgnoredFunc) (*pathTrie, error) {
+	trie := &pathTrie{}
+	mu := sync.Mutex{}
+
+	eg := errgroup.Group{}
+	eg.SetLimit(100)
+	eg.Go(func() error {
+		return walkDir(c.RepoRoot, "", &eg, func(rel string, d fs.DirEntry) error {
+			if isBazelIgnored(rel) {
+				return walkSkipDir
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			trie.Put(rel, &d)
+			return nil
+		})
+	})
+
+	return trie, eg.Wait()
+}
+
+var walkSkipDir error = fs.SkipDir
+
+type walkDirFunc func(rel string, d fs.DirEntry) error
+
+// walkDir recursively descends path, calling walkDirFn.
+func walkDir(root, rel string, eg *errgroup.Group, walkDirFn walkDirFunc) error {
+	dirs, err := os.ReadDir(path.Join(root, rel))
+	if err != nil {
+		return err
+	}
+
+	for _, d1 := range dirs {
+		name1 := d1.Name()
+
+		// Ignore .git and empty names
+		if name1 == "" || name1 == ".git" {
+			continue
+		}
+
+		path1 := path.Join(rel, name1)
+		if err := walkDirFn(path1, d1); err != nil {
+			if err == walkSkipDir {
+				continue
+			}
+			return err
+		}
+
+		if d1.IsDir() {
+			eg.Go(func() error {
+				return walkDir(root, path1, eg, walkDirFn)
+			})
+		}
+	}
+	return nil
 }
