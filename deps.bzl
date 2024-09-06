@@ -54,16 +54,6 @@ def gazelle_dependencies(
         sha256 = "74d544d96f4a5bb630d465ca8bbcfe231e3594e5aae57e1edbf17a6eb3ca2506",
     )
 
-    _maybe(
-        http_archive,
-        name = "rules_license",
-        urls = [
-            "https://mirror.bazel.build/github.com/bazelbuild/rules_license/releases/download/1.0.0/rules_license-1.0.0.tar.gz",
-            "https://github.com/bazelbuild/rules_license/releases/download/1.0.0/rules_license-1.0.0.tar.gz",
-        ],
-        sha256 = "26d4021f6898e23b82ef953078389dd49ac2b5618ac564ade4ef87cced147b38",
-    )
-
     if go_sdk:
         go_repository_cache(
             name = "bazel_gazelle_go_repository_cache",
@@ -89,27 +79,6 @@ def gazelle_dependencies(
             go_env = go_env,
         )
 
-    go_repository_tools(
-        name = "bazel_gazelle_go_repository_tools",
-        go_cache = "@bazel_gazelle_go_repository_cache//:go.env",
-    )
-
-    go_repository_config(
-        name = "bazel_gazelle_go_repository_config",
-        config = go_repository_default_config,
-    )
-
-    is_bazel_module(
-        name = "bazel_gazelle_is_bazel_module",
-        is_bazel_module = False,
-    )
-    _maybe(
-        go_repository,
-        name = "co_honnef_go_tools",
-        importpath = "honnef.co/go/tools",
-        sum = "h1:/hemPrYIhOhy8zYrNj+069zDB68us2sMGsfkFJO0iZs=",
-        version = "v0.0.0-20190523083050-ea95bdfd59fc",
-    )
     _maybe(
         go_repository,
         name = "com_github_bazelbuild_buildtools",
@@ -375,6 +344,29 @@ def gazelle_dependencies(
         importpath = "golang.org/x/xerrors",
         sum = "h1:go1bK/D/BFZV2I8cIQd1NKEZ+0owSTG1fDTci4IqFcE=",
         version = "v0.0.0-20200804184101-5ec99f83aff1",
+    )
+    _maybe(
+        http_archive,
+        name = "rules_license",
+        urls = [
+            "https://mirror.bazel.build/github.com/bazelbuild/rules_license/releases/download/1.0.0/rules_license-1.0.0.tar.gz",
+            "https://github.com/bazelbuild/rules_license/releases/download/1.0.0/rules_license-1.0.0.tar.gz",
+        ],
+        sha256 = "26d4021f6898e23b82ef953078389dd49ac2b5618ac564ade4ef87cced147b38",
+    )
+
+    go_repository_config(
+        name = "bazel_gazelle_go_repository_config",
+        config = go_repository_default_config,
+    )
+    go_repository_tools(
+        name = "bazel_gazelle_go_repository_tools",
+        go_cache = "@bazel_gazelle_go_repository_cache//:go.env",
+    )
+
+    is_bazel_module(
+        name = "bazel_gazelle_is_bazel_module",
+        is_bazel_module = False,
     )
 
 def _maybe(repo_rule, name, **kwargs):

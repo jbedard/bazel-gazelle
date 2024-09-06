@@ -50,6 +50,7 @@ go_download_sdk(
 
 load("//:deps.bzl", "gazelle_dependencies")
 
+# gazelle:repository_macro deps.bzl%gazelle_dependencies
 gazelle_dependencies(go_sdk = "go_sdk")
 
 # For API doc generation
