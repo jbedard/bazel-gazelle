@@ -134,9 +134,9 @@ func Walk(c *config.Config, cexts []config.Configurer, dirs []string, mode Mode,
 func visit(c *config.Config, cexts []config.Configurer, knownDirectives map[string]bool, updateRels *UpdateFilter, trie *pathTrie, wf WalkFunc, rel string, updateParent bool) {
 	haveError := false
 
-	f, err := loadBuildFile(c, rel, trie.files)
-	if err != nil {
-		log.Print(err)
+	f := trie.buildFile
+	if trie.buildFileErr != nil {
+		log.Print(trie.buildFileErr)
 		if c.Strict {
 			// TODO(https://github.com/bazelbuild/bazel-gazelle/issues/1029):
 			// Refactor to accumulate and propagate errors to main.
@@ -365,6 +365,9 @@ type pathTrie struct {
 	entry   fs.DirEntry
 	subdirs []*pathTrie
 	files   []fs.DirEntry
+
+	buildFileErr error
+	buildFile    *rule.File
 }
 
 // Basic factory method to ensure the entry is properly copied
@@ -381,22 +384,31 @@ func buildTrie(c *config.Config, isIgnored isIgnoredFunc) (*pathTrie, error) {
 	// An error group to handle error propagation
 	eg := errgroup.Group{}
 	eg.Go(func() error {
-		return walkDir(c.RepoRoot, "", &eg, limitCh, isIgnored, trie)
+		return walkDir(c, "", &eg, limitCh, isIgnored, trie)
 	})
 
 	return trie, eg.Wait()
 }
 
 // walkDir recursively and concurrently descends into the 'rel' directory and builds a trie
-func walkDir(root, rel string, eg *errgroup.Group, limitCh chan struct{}, isIgnored isIgnoredFunc, trie *pathTrie) error {
+func walkDir(c *config.Config, rel string, eg *errgroup.Group, limitCh chan struct{}, isIgnored isIgnoredFunc, trie *pathTrie) error {
 	limitCh <- struct{}{}
 	defer (func() { <-limitCh })()
 
-	entries, err := os.ReadDir(filepath.Join(root, rel))
+	dir := filepath.Join(c.RepoRoot, rel)
+
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return err
 	}
 
+	// Concurrently load the build file for the current directory
+	eg.Go(func() error {
+		trie.buildFile, trie.buildFileErr = loadBuildFile(c, rel, entries)
+		return nil
+	})
+
+	// Concurrently collect and recurse into all non-ignored files and directories
 	for _, entry := range entries {
 		entryName := entry.Name()
 		entryPath := path.Join(rel, entryName)
@@ -410,7 +422,7 @@ func walkDir(root, rel string, eg *errgroup.Group, limitCh chan struct{}, isIgno
 			entryTrie := newTrie(entry)
 
 			eg.Go(func() error {
-				return walkDir(root, entryPath, eg, limitCh, isIgnored, entryTrie)
+				return walkDir(c, entryPath, eg, limitCh, isIgnored, entryTrie)
 			})
 
 			trie.subdirs = append(trie.subdirs, entryTrie)
