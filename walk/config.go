@@ -112,6 +112,7 @@ func (cr *Configurer) Configure(c *config.Config, rel string, f *rule.File) {
 }
 
 type isIgnoredFunc = func(string) bool
+type isGitIgnoredFunc = func(string, bool) bool
 
 var nothingIgnored isIgnoredFunc = func(string) bool { return false }
 

@@ -155,6 +155,14 @@ func visit(c *config.Config, cexts []config.Configurer, knownDirectives map[stri
 		return nil, false
 	}
 
+	// PATCH(gitignore) ---
+	var isGitIgnored isGitIgnoredFunc
+	isGitIgnoredExt, hasGitIgnore := c.Exts[config.ASPECT_GITIGNORE]
+	if hasGitIgnore && isGitIgnoredExt != nil {
+		isGitIgnored = isGitIgnoredExt.(isGitIgnoredFunc)
+	}
+	// END PATCH(gitignore) ---
+
 	// Filter and collect files
 	var regularFiles []string
 	for _, ent := range trie.files {
@@ -163,6 +171,13 @@ func visit(c *config.Config, cexts []config.Configurer, knownDirectives map[stri
 		if wc.isExcluded(entRel) {
 			continue
 		}
+		// PATCH(gitignore) ---
+		// NOTE: .gitignore must be applied *before* symlinks are followed
+		// See notes on symlink examples at https://git-scm.com/docs/gitignore#_examples
+		if isGitIgnored != nil && isGitIgnored(entRel, ent.IsDir()) {
+			continue
+		}
+		// END PATCH(gitignore) ---
 		if ent := resolveFileInfo(wc, dir, entRel, ent); ent != nil {
 			regularFiles = append(regularFiles, base)
 		}
