@@ -165,6 +165,13 @@ func visit(c *config.Config, cexts []config.Configurer, knownDirectives map[stri
 		return nil, false
 	}
 
+	// PATCH(gitignore) ---
+	isGitIgnored, hasGitIgnore := c.Exts[config.ASPECT_GITIGNORE].(isIgnoredFunc)
+	if !hasGitIgnore || isGitIgnored == nil {
+		isGitIgnored = nothingIgnored
+	}
+	// END PATCH(gitignore) ---
+
 	var dirs, subdirs, regularFiles []string
 	for _, ent := range ents {
 		base := ent.Name()
@@ -172,6 +179,11 @@ func visit(c *config.Config, cexts []config.Configurer, knownDirectives map[stri
 		if wc.isExcluded(entRel) {
 			continue
 		}
+		// PATCH(gitignore) ---
+		if isGitIgnored(entRel) {
+			continue
+		}
+		// END PATCH(gitignore) ---
 		ent := resolveFileInfo(wc, dir, entRel, ent)
 		switch {
 		case ent == nil:
