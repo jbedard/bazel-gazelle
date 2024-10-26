@@ -134,6 +134,14 @@ func Walk(c *config.Config, cexts []config.Configurer, dirs []string, mode Mode,
 func visit(c *config.Config, cexts []config.Configurer, knownDirectives map[string]bool, updateRels *UpdateFilter, trie *pathTrie, wf WalkFunc, rel string, updateParent bool) ([]string, bool) {
 	haveError := false
 
+	// PATCH(fs.DirEntry map) ---
+	entsMap := make(map[string]fs.DirEntry, len(trie.children))
+	for _, node := range trie.children {
+		entsMap[node.entry.Name()] = node.entry
+	}
+	c.Exts[config.ASPECT_DIR_ENTRIES] = entsMap
+	// END PATCH(fs.DirEntry map) ---
+
 	// Absolute path to the directory being visited
 	dir := filepath.Join(c.RepoRoot, rel)
 
@@ -148,7 +156,7 @@ func visit(c *config.Config, cexts []config.Configurer, knownDirectives map[stri
 		haveError = true
 	}
 
-	c = configure(cexts, knownDirectives, c, rel, f)
+	configure(cexts, knownDirectives, c, rel, f)
 	wc := getWalkConfig(c)
 
 	if wc.isExcluded(rel) {
@@ -199,7 +207,7 @@ func visit(c *config.Config, cexts []config.Configurer, knownDirectives map[stri
 			if updateRels.shouldVisit(entRel, shouldUpdate) {
 				// PATCH ---
 				// Merge the returned 'subFiles' if 'mergeFiles' is true
-				subFiles, mergeFiles := visit(c, cexts, knownDirectives, updateRels, t, wf, entRel, shouldUpdate)
+				subFiles, mergeFiles := visit(c.Clone(), cexts, knownDirectives, updateRels, t, wf, entRel, shouldUpdate)
 				if mergeFiles {
 					for _, f := range subFiles {
 						regularFiles = append(regularFiles, path.Join(base, f))
@@ -327,10 +335,7 @@ func loadBuildFile(c *config.Config, pkg, dir string, ents []fs.DirEntry) (*rule
 	return rule.LoadFile(path, pkg)
 }
 
-func configure(cexts []config.Configurer, knownDirectives map[string]bool, c *config.Config, rel string, f *rule.File) *config.Config {
-	if rel != "" {
-		c = c.Clone()
-	}
+func configure(cexts []config.Configurer, knownDirectives map[string]bool, c *config.Config, rel string, f *rule.File) {
 	if f != nil {
 		for _, d := range f.Directives {
 			if !knownDirectives[d.Key] {
@@ -346,7 +351,6 @@ func configure(cexts []config.Configurer, knownDirectives map[string]bool, c *co
 	for _, cext := range cexts {
 		cext.Configure(c, rel, f)
 	}
-	return c
 }
 
 func findGenFiles(wc *walkConfig, f *rule.File) []string {

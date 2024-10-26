@@ -122,6 +122,7 @@ type MappedKind struct {
 
 const ASPECT_WALKSUBDIR = "__aspect:walksubdir"
 const ASPECT_GITIGNORE = "__aspect:gitignore"
+const ASPECT_DIR_ENTRIES = "__aspect:direntries"
 
 func New() *Config {
 	return &Config{
