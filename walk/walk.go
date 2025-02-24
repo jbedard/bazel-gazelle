@@ -172,21 +172,17 @@ func visit(c *config.Config, cexts []config.Configurer, knownDirectives map[stri
 	}
 
 	wc := trie.walkConfig
+	// TODO: move self-exclusion to fs-walk
+	// TODO: only invoke self-exclusion check if this BUILD added 'excludes' entries
+	// which have not already been checked on this entry in the parent directory.
 	if wc.isExcluded(rel) {
 		return nil, false
 	}
 
 	// Filter and collect files
-	var regularFiles []string
+	regularFiles := make([]string, 0, len(trie.files))
 	for _, ent := range trie.files {
-		base := ent.Name()
-		entRel := path.Join(rel, base)
-		if wc.isExcluded(entRel) {
-			continue
-		}
-		if ent := resolveFileInfo(wc, dir, entRel, ent); ent != nil {
-			regularFiles = append(regularFiles, base)
-		}
+		regularFiles = append(regularFiles, ent.Name())
 	}
 
 	shouldUpdate := updateRels.shouldUpdate(rel, updateParent)
@@ -196,19 +192,14 @@ func visit(c *config.Config, cexts []config.Configurer, knownDirectives map[stri
 	for _, t := range trie.children {
 		base := t.entry.Name()
 		entRel := path.Join(rel, base)
-		if wc.isExcluded(entRel) {
-			continue
-		}
-		if ent := resolveFileInfo(wc, dir, entRel, t.entry); ent != nil {
-			if updateRels.shouldVisit(entRel, shouldUpdate) {
-				subFiles, shouldMerge := visit(c.Clone(), cexts, knownDirectives, updateRels, t, wf, entRel, shouldUpdate)
-				if shouldMerge {
-					for _, f := range subFiles {
-						regularFiles = append(regularFiles, path.Join(base, f))
-					}
-				} else {
-					subdirs = append(subdirs, base)
+		if updateRels.shouldVisit(entRel, shouldUpdate) {
+			subFiles, shouldMerge := visit(c.Clone(), cexts, knownDirectives, updateRels, t, wf, entRel, shouldUpdate)
+			if shouldMerge {
+				for _, f := range subFiles {
+					regularFiles = append(regularFiles, path.Join(base, f))
 				}
+			} else {
+				subdirs = append(subdirs, base)
 			}
 		}
 	}
@@ -441,6 +432,8 @@ func walkDir(root, readBuildFilesDir string, rel string, eg *errgroup.Group, lim
 
 	if trie.build != nil {
 		trie.walkConfig.readConfig(rel, trie.build)
+
+		// TODO: move self-exclusion isExcluded() call from `visit` here.
 	}
 
 	for _, entry := range entries {
@@ -452,6 +445,7 @@ func walkDir(root, readBuildFilesDir string, rel string, eg *errgroup.Group, lim
 			continue
 		}
 
+		// Quick-exit for directories
 		if entry.IsDir() {
 			if isRepoDirectoryIgnored(entryPath) {
 				continue
@@ -461,7 +455,20 @@ func walkDir(root, readBuildFilesDir string, rel string, eg *errgroup.Group, lim
 			if !updateRels.shouldVisit(entryPath, true) {
 				continue
 			}
+		}
 
+		// Check if this directory entry is excluded
+		// PERF: check *after* the bazel/repo ignore checks
+		if trie.walkConfig.isExcluded(entryPath) {
+			continue
+		}
+
+		entry = resolveFileInfo(trie.walkConfig, dir, entryPath, entry)
+		if entry == nil {
+			continue
+		}
+
+		if entry.IsDir() {
 			entryTrie := trie.newChild(entry)
 			trie.children = append(trie.children, entryTrie)
 			eg.Go(func() error {
